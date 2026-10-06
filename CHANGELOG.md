@@ -33,6 +33,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- **Performance:** job-stats bookkeeping no longer re-reads every node-stats record on each node step. Framework status updates only aggregate node stats for job run managers that consume them, the CLI operator summary reads only the current node (stopping at the first unfinished batch), `get_failed_docs_for_batch` reads only that batch (JSON files / DuckDB `WHERE`), and job-run status with node and batch stats is served from a single scan. With the filesystem store this cuts job-stats overhead from ~100 s to ~4 s at 10k documents and removes the quadratic growth with document count
 - **Breaking:** `IngestSourceOperator` migrated from `connection_params` + `credentials` to unified `provider_config`; all 8 source adapters and all sample flows updated (#152)
 - `PIIAndHAPAnnotator` provider selection replaced with decorator-based `PIIAndHAPDetectionFactory` registry (#76)
 - 33 self-free instance methods converted to `@staticmethod` across `FlowValidator`, `AuthoringCompiler`, `FlowExecutionReporter`, `MetadataAggregator`, and `IncrementalUpdateService` (#139)
