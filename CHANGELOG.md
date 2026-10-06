@@ -33,6 +33,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- **Performance:** `EmbeddingsOperator` batches texts across documents and sends them in requests of `provider_config.batch_size` with up to `provider_config.max_concurrent_requests` requests in flight (LiteLLM default 4, watsonx 1); both options are now passed through to the adapters. Retries apply per request, and when a shared request fails each affected document is retried on its own, so a bad text only fails its own document (about 4x faster for 100 docs x 60 chunks and about 24x for 100 docs x 5 chunks against a 300 ms provider)
 - **Breaking:** `IngestSourceOperator` migrated from `connection_params` + `credentials` to unified `provider_config`; all 8 source adapters and all sample flows updated (#152)
 - `PIIAndHAPAnnotator` provider selection replaced with decorator-based `PIIAndHAPDetectionFactory` registry (#76)
 - 33 self-free instance methods converted to `@staticmethod` across `FlowValidator`, `AuthoringCompiler`, `FlowExecutionReporter`, `MetadataAggregator`, and `IncrementalUpdateService` (#139)
@@ -40,6 +41,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- `provider_config.batch_size` and `provider_config.max_concurrent_requests` of the embeddings operator were validated but ignored for LiteLLM (and `batch_size` for watsonx)
 - Storage output now accepts cloud destination credentials and S3 `key_prefix` saved by the UI, while retaining support for the separate `credentials` field and legacy S3 `prefix`, and reads ingest source paths from the normalized `provider_config`.
 - Updated JupyterLab to 4.6.4 in the full and slim notebooks extras to resolve the security alerts tracked in #51.
 - Notification panel now propagates `action_type` from backend validation and fixes stale alert detection (#91)
