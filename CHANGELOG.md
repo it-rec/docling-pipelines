@@ -33,6 +33,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Changed
 
+- **Performance:** Docling `DocumentConverter` / `DocumentExtractor` instances are reused across worker threads, micro-batches and operator instances through a bounded process-wide pool (`DOCPIPE_DOCLING_CONVERTER_POOL_SIZE`, default `min(2*cpu, 16)`; idle instances expire after `DOCPIPE_DOCLING_CONVERTER_IDLE_TTL_SECONDS`, default 600). Previously every worker thread of every micro-batch rebuilt its converter and reloaded the layout/table/OCR models; the GPU and Docling entity-extraction paths no longer rebuild per batch or per document
 - **Breaking:** `IngestSourceOperator` migrated from `connection_params` + `credentials` to unified `provider_config`; all 8 source adapters and all sample flows updated (#152)
 - `PIIAndHAPAnnotator` provider selection replaced with decorator-based `PIIAndHAPDetectionFactory` registry (#76)
 - 33 self-free instance methods converted to `@staticmethod` across `FlowValidator`, `AuthoringCompiler`, `FlowExecutionReporter`, `MetadataAggregator`, and `IncrementalUpdateService` (#139)
@@ -40,6 +41,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Fixed
 
+- Docling converter cache keys now hash the actual option values, so different OCR / table / accelerator settings of the same option type no longer share a converter
 - Storage output now accepts cloud destination credentials and S3 `key_prefix` saved by the UI, while retaining support for the separate `credentials` field and legacy S3 `prefix`, and reads ingest source paths from the normalized `provider_config`.
 - Updated JupyterLab to 4.6.4 in the full and slim notebooks extras to resolve the security alerts tracked in #51.
 - Notification panel now propagates `action_type` from backend validation and fixes stale alert detection (#91)
