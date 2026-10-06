@@ -62,6 +62,71 @@ class NodeStatsAggregator:
             Dictionary mapping node_id to aggregated NodeStats
         """
         all_records = self.job_stats_store.get_node_stats(job_run_id=job_run_id)
+        return self.aggregate_node_stats_records(all_records=all_records)
+
+    def get_aggregated_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> NodeStats | None:
+        """
+        Get the aggregated statistics of a single node.
+
+        Reads only the raw records of that node and applies the same aggregation
+        as ``get_aggregated_node_stats()``, so the result equals
+        ``get_aggregated_node_stats(...).get(node_id)``.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+
+        Returns:
+            Aggregated NodeStats, or None if the node has no reportable records
+        """
+        node_records = self.job_stats_store.get_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
+        return self.aggregate_node_stats_records(all_records=node_records).get(node_id)
+
+    def get_batch_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> dict[str, NodeStats]:
+        """
+        Get batch-level node statistics of a single node (no aggregation).
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+
+        Returns:
+            Dict: {batch_id: NodeStats}
+        """
+        return self.job_stats_store.get_batch_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
+
+    def get_aggregated_and_batch_node_stats(
+        self, *, job_run_id: str
+    ) -> tuple[dict[str, NodeStats], dict[str, dict[str, NodeStats]]]:
+        """
+        Get aggregated node statistics and batch-level node statistics from one store read.
+
+        Equivalent to calling ``get_aggregated_node_stats()`` and
+        ``get_batch_node_stats()``, but lets the store serve both views from a
+        single scan.
+
+        Args:
+            job_run_id: Job run identifier
+
+        Returns:
+            Tuple of ({node_id: aggregated NodeStats}, {node_id: {batch_id: NodeStats}})
+        """
+        all_records, batch_node_stats = self.job_stats_store.get_node_stats_with_batch_view(job_run_id=job_run_id)
+        return self.aggregate_node_stats_records(all_records=all_records), batch_node_stats
+
+    def aggregate_node_stats_records(self, *, all_records: dict | list) -> dict[str, NodeStats]:
+        """
+        Aggregate raw node statistics records into one NodeStats per node.
+
+        Batch records are aggregated per node; a non-batch record of a node is
+        returned as is (with progress percentage injected).
+
+        Args:
+            all_records: Raw records as returned by the store
+
+        Returns:
+            Dictionary mapping node_id to aggregated NodeStats
+        """
         if not all_records:
             return {}
 

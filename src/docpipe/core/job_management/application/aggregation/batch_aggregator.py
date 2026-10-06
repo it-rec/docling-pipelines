@@ -637,6 +637,18 @@ def _aggregate_extraction_stage_progress(*, batch_records: list[NodeStats]) -> d
     return result
 
 
+#: Batch node statuses counted as finished by ``calculate_finished_batches``.
+FINISHED_BATCH_STATUSES: frozenset[str] = frozenset(
+    {
+        ExecutionStatus.COMPLETED.value,
+        ExecutionStatus.SKIPPED.value,
+        ExecutionStatus.COMPLETED_WITH_WARNINGS.value,
+        ExecutionStatus.COMPLETED_WITH_ERRORS.value,
+        ExecutionStatus.FAILED.value,
+    }
+)
+
+
 def calculate_finished_batches(*, status_counts: dict[str, int]) -> int:
     """
     Calculates the number of finished batches.

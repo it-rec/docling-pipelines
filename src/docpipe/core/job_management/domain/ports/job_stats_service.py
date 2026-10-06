@@ -103,6 +103,66 @@ class JobStatsService(ABC):
         """
         ...
 
+    def get_aggregated_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> "NodeStats | None":
+        """
+        Retrieve the aggregated statistics of a single node.
+
+        Equivalent to ``get_job(include_node_stats=True).node_stats.get(node_id)``
+        (None when the job run does not exist). The default implementation
+        delegates to ``get_job``; implementations should override it to read
+        only the records of that node.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+
+        Returns:
+            Aggregated NodeStats of the node, or None
+        """
+        job_stats = self.get_job(job_run_id=job_run_id, include_node_stats=True)
+        if not job_stats or not job_stats.node_stats:
+            return None
+        return job_stats.node_stats.get(node_id)
+
+    def get_batch_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> "dict[str, NodeStats]":
+        """
+        Retrieve the batch-level statistics of a single node (no aggregation).
+
+        Equivalent to ``get_job(include_batch_stats=True).batch_node_stats.get(node_id, {})``.
+        The default implementation delegates to ``get_job``; implementations
+        should override it to read only the records of that node. Callers must
+        not rely on it to detect a missing job run.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+
+        Returns:
+            Dict: {batch_id: NodeStats}
+        """
+        job_stats = self.get_job(job_run_id=job_run_id, include_node_stats=False, include_batch_stats=True)
+        if not job_stats or not job_stats.batch_node_stats:
+            return {}
+        return job_stats.batch_node_stats.get(node_id, {})
+
+    def all_node_batches_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and every one of them is in one of ``statuses``.
+
+        Equivalent to checking ``get_batch_node_stats_for_node()``; implementations
+        should override it to stop reading at the first record that is not.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and all are in ``statuses``
+        """
+        batch_records = self.get_batch_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
+        return bool(batch_records) and all(record.node_status in statuses for record in batch_records.values())
+
     @abstractmethod
     def end_job(self, *, job_run_id: str, status: str, job_run_stats: dict[str, Any] | None = None) -> None:
         """

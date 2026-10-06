@@ -583,7 +583,7 @@ class TestGetFailedDocsForBatch:
 
         from docpipe.exceptions.docpipe_exceptions import JobStatsStoreReadException
 
-        with patch.object(store, "get_node_stats", side_effect=RuntimeError("io error")):
+        with patch.object(store, "_read_node_stats_records", side_effect=RuntimeError("io error")):
             with pytest.raises(JobStatsStoreReadException):
                 store.get_failed_docs_for_batch(job_run_id="any", batch_id="any")
 

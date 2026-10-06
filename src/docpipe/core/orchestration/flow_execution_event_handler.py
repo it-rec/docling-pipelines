@@ -98,7 +98,8 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
     def _log_node_stats_debug(self, job_stats):
         """Log node stats for debugging."""
         logger.debug(
-            f"Node stats count: {len(job_stats.node_stats) if job_stats.node_stats else 0}",
+            "Node stats count: %s",
+            len(job_stats.node_stats) if job_stats.node_stats else 0,
             extra=self.common_log_arguments,
         )
         if job_stats.node_stats:
@@ -108,7 +109,7 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
                     if hasattr(node_stat, "node_status")
                     else node_stat.get("node_status", "Unknown")
                 )
-                logger.debug(f"Node {node_id}: status={node_status_val}", extra=self.common_log_arguments)
+                logger.debug("Node %s: status=%s", node_id, node_status_val, extra=self.common_log_arguments)
         else:
             logger.warning("No node stats found when determining final job status", extra=self.common_log_arguments)
 
@@ -143,7 +144,9 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             # Ensure node_stats is not None before passing to determine_final_job_status
             node_stats_for_status = job_stats.node_stats if job_stats.node_stats else {}
             logger.debug(
-                f"About to determine status. node_stats_for_status type: {type(node_stats_for_status)}, len: {len(node_stats_for_status) if node_stats_for_status else 0}",
+                "About to determine status. node_stats_for_status type: %s, len: %s",
+                type(node_stats_for_status),
+                len(node_stats_for_status) if node_stats_for_status else 0,
                 extra=self.common_log_arguments,
             )
             return OperatorUtils.determine_final_job_status(node_stats_list=node_stats_for_status)
@@ -180,12 +183,9 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
         if job_stats and self.job_log_path:
             self.job_stats_service.write_job_logs(job_stats=job_stats, job_log_path=self.job_log_path)
 
-        self._update_framework_status(
-            status=job_status.value,
-            job_run_stats=self._get_complete_job_stats(message=message),
-        )
+        self._push_framework_status(status=job_status.value, message=message)
 
-        logger.info(f"Job status is {job_status.value}.", extra=self.common_log_arguments)
+        logger.info("Job status is %s.", job_status.value, extra=self.common_log_arguments)
 
         # Generate job report in background for all terminal statuses
         if job_stats and job_status in TERMINAL_JOB_STATUSES:
@@ -210,12 +210,12 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             self.execution_reporter.print_operator_start(step_name=node_name, operator_type=operator_type)
 
         if prev_results is None:
-            logger.info(f"Error detected in previous step - node {node_name} skipped.", extra=log_extra)
+            logger.info("Error detected in previous step - node %s skipped.", node_name, extra=log_extra)
 
         if job_status == ExecutionStatus.CANCELING:
-            logger.info(f"Cancelling the branch execution at node name: {node_name}", extra=log_extra)
+            logger.info("Cancelling the branch execution at node name: %s", node_name, extra=log_extra)
         elif job_status == ExecutionStatus.FAILING:
-            logger.info(f"Aborting the branch execution at node name: {node_name}", extra=log_extra)
+            logger.info("Aborting the branch execution at node name: %s", node_name, extra=log_extra)
 
     def after_step_execution_complete(
         self,
@@ -238,38 +238,19 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
                 job_run_id=self.job_run_id, metadata=metadata, operator_category=operator_category.value
             )
 
-        self._update_framework_status(
-            status=ExecutionStatus.RUNNING.value,
-            job_run_stats=self._get_complete_job_stats(),
-        )
+        self._push_framework_status(status=ExecutionStatus.RUNNING.value)
 
         log_elapsed_time(start_time=start_time, operator=operator)
 
         # Print operator summary if output formatter is available
         if self.execution_reporter and self.job_stats_service and self.job_run_id:
-            # Get the complete job stats to access node stats
-            job_stats = self.job_stats_service.get_job(
-                job_run_id=self.job_run_id, include_node_stats=True, include_batch_stats=True
+            self._print_operator_summary_if_ready(
+                node_id=node_id, node_name=node_name, global_config=global_config, tables=tables
             )
-            if job_stats and job_stats.node_stats and node_id in job_stats.node_stats:
-                node_stats = job_stats.node_stats[node_id]
-
-                # Check if we should print the summary (handles both batch and non-batch modes)
-                should_print = self._should_print_operator_summary(
-                    node_id=node_id,
-                    node_stats=node_stats,
-                    global_config=global_config,
-                    job_stats=job_stats,
-                )
-
-                if should_print:
-                    self.execution_reporter.print_operator_summary(
-                        step_name=node_name, node_stats=node_stats, tables=tables
-                    )
 
         if is_last_step:
             log_extra = {**(self.common_log_arguments or {}), "node_id": node_id, "node_name": node_name}
-            logger.info(f" Branch execution completed at node name: {node_name}", extra=log_extra)
+            logger.info(" Branch execution completed at node name: %s", node_name, extra=log_extra)
 
     def after_node_skipped(
         self,
@@ -301,7 +282,9 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
 
         log_extra = {**(self.common_log_arguments or {}), "node_id": node_id, "node_name": node_name}
         logger.info(
-            f"Skipped execution for Step Name: {node_name}, operator: {operator_type} because no input data available for processing.",
+            "Skipped execution for Step Name: %s, operator: %s because no input data available for processing.",
+            node_name,
+            operator_type,
             extra=log_extra,
         )
 
@@ -353,16 +336,16 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             if job_stats and self.job_log_path:
                 self.job_stats_service.write_job_logs(job_stats=job_stats, job_log_path=self.job_log_path)
 
-        self._update_framework_status(
-            status=ExecutionStatus.FAILED.value,
-            job_run_stats=self._get_complete_job_stats(message=str(e)),
-        )
+        self._push_framework_status(status=ExecutionStatus.FAILED.value, message=str(e))
 
         logger.error(e, stack_info=True, exc_info=True, extra=self.common_log_arguments)
 
         log_extra = {**(self.common_log_arguments or {}), "node_id": node_id, "node_name": node_name}
         logger.error(
-            f">>> Node {node_name} failed and caused aborting the branch execution: {e} transaction_ID: {get_session_info().transaction_id}",
+            ">>> Node %s failed and caused aborting the branch execution: %s transaction_ID: %s",
+            node_name,
+            e,
+            get_session_info().transaction_id,
             extra=log_extra,
         )
 
@@ -416,16 +399,24 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
                 downstream_node_names=downstream_node_names,
             )
             logger.info(
-                f"Initialized pending stats for {len(batch_ids)} batches x {len(downstream_node_ids)} nodes",
+                "Initialized pending stats for %s batches x %s nodes",
+                len(batch_ids),
+                len(downstream_node_ids),
                 extra=self.common_log_arguments,
             )
 
     def _get_complete_job_stats(self, *, message: str | None = None) -> dict[str, Any] | None:
-        """Return complete job stats including node_stats for framework updates."""
+        """
+        Return job stats for framework updates.
+
+        Node statistics are only aggregated (a read of every node-stats record of
+        the run) when the job run manager declares that it consumes them.
+        """
         if not self.job_stats_service or not self.job_run_id:
             return {"message": message} if message else None
 
-        job_stats = self.job_stats_service.get_job(job_run_id=self.job_run_id, include_node_stats=True)
+        include_node_stats = bool(getattr(self.job_run_manager, "consumes_node_stats", True))
+        job_stats = self.job_stats_service.get_job(job_run_id=self.job_run_id, include_node_stats=include_node_stats)
         if not job_stats:
             return {"message": message} if message else None
 
@@ -433,6 +424,17 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
         if message:
             job_run_stats["message"] = message
         return job_run_stats
+
+    def _push_framework_status(self, *, status: str, message: str | None = None) -> None:
+        """
+        Push a status update with job stats to the framework, if one is configured.
+
+        Job stats are only collected when a job run manager will receive them, so
+        runs without one (CLI, library) do not pay for the read.
+        """
+        if not self.job_run_manager or not self.job_run_id:
+            return
+        self._update_framework_status(status=status, job_run_stats=self._get_complete_job_stats(message=message))
 
     def _update_framework_status(self, *, status: str, job_run_stats: dict[str, Any] | None = None) -> None:
         """Update external framework status without allowing framework failures to stop the flow."""
@@ -502,7 +504,9 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             )
 
         logger.error(
-            f"Report generation failed after {elapsed_time:.2f}s: {exception}",
+            "Report generation failed after %.2fs: %s",
+            elapsed_time,
+            exception,
             extra=self.common_log_arguments,
             exc_info=True,
         )
@@ -602,7 +606,8 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             job_stats_fresh.batch_node_stats = batch_node_stats_ref
             if batch_node_stats_ref:
                 logger.info(
-                    f"Using pre-fetched batch_node_stats with {len(batch_node_stats_ref)} node(s)",
+                    "Using pre-fetched batch_node_stats with %s node(s)",
+                    len(batch_node_stats_ref),
                     extra=self.common_log_arguments,
                 )
 
@@ -727,9 +732,7 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             True if summary should be printed, False otherwise
         """
         # Check if we're in a batch context
-        batch_id = global_config.get(DocpipeConstants.BATCH_ID) if global_config else None
-
-        if batch_id is None:
+        if not FlowExecutionEventHandler._is_batch_context(global_config=global_config):
             # Non-batch mode: always print
             return True
 
@@ -739,6 +742,24 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
         if job_stats.batch_node_stats and node_id in job_stats.batch_node_stats:
             batch_records = list(job_stats.batch_node_stats[node_id].values())
 
+        return FlowExecutionEventHandler._all_batches_finished(
+            batch_records=batch_records
+        ) and FlowExecutionEventHandler._is_terminal_node_status(node_stats=node_stats)
+
+    @staticmethod
+    def _is_batch_context(*, global_config: dict[str, Any] | None) -> bool:
+        """Return True when the step runs inside a micro-batch (a batch_id is set)."""
+        return (global_config.get(DocpipeConstants.BATCH_ID) if global_config else None) is not None
+
+    @staticmethod
+    def _all_batches_finished(*, batch_records: list) -> bool:
+        """
+        Return True when every batch record of a node is finished.
+
+        Finished means at least one batch exists, all batches are in a finished
+        state (completed, completed with warnings/errors, failed or skipped) and
+        none is pending or queued.
+        """
         if not batch_records:
             # No batch records found, don't print (safe default)
             return False
@@ -757,15 +778,55 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
             status_counts.get(ExecutionStatus.PENDING.value, 0) + status_counts.get(ExecutionStatus.QUEUED.value, 0)
         ) > 0
 
-        # Print only when all batches done AND node in terminal state
         # finished_batches > 0 ensures aggregation has run at least once
+        return finished_batches > 0 and finished_batches == total_batches and not has_pending
+
+    @staticmethod
+    def _is_terminal_node_status(*, node_stats) -> bool:
+        """Return True when the (aggregated) node status is a terminal node state."""
         terminal_states_values = frozenset(state.value for state in TERMINAL_NODE_STATES)
-        return (
-            finished_batches > 0
-            and finished_batches == total_batches
-            and not has_pending
-            and node_stats.node_status in terminal_states_values
+        return node_stats.node_status in terminal_states_values
+
+    def _print_operator_summary_if_ready(
+        self,
+        *,
+        node_id: str,
+        node_name: str,
+        global_config: dict[str, Any] | None,
+        tables=None,
+    ) -> None:
+        """
+        Print the operator summary of a node once it is complete.
+
+        Same decision as ``_should_print_operator_summary`` over a full
+        ``get_job`` read, but only the records of this node are read: in batch
+        mode the cheap batch-completion check runs first, and the aggregated
+        node stats are only built once every batch of the node has finished.
+        """
+        if not self.execution_reporter or not self.job_stats_service or not self.job_run_id:
+            return
+
+        is_batch_context = self._is_batch_context(global_config=global_config)
+        if is_batch_context:
+            from docpipe.core.job_management.application.aggregation.batch_aggregator import FINISHED_BATCH_STATUSES
+
+            # Same outcome as _all_batches_finished() over the node's batch records:
+            # at least one batch and every batch in a finished state (no pending/queued/running).
+            if not self.job_stats_service.all_node_batches_in_statuses(
+                job_run_id=self.job_run_id, node_id=node_id, statuses=FINISHED_BATCH_STATUSES
+            ):
+                return
+
+        node_stats = self.job_stats_service.get_aggregated_node_stats_for_node(
+            job_run_id=self.job_run_id, node_id=node_id
         )
+        if node_stats is None:
+            return
+
+        if is_batch_context and not self._is_terminal_node_status(node_stats=node_stats):
+            return
+
+        self.execution_reporter.print_operator_summary(step_name=node_name, node_stats=node_stats, tables=tables)
 
     def _create_log_folders(self, *, job_id, type_):
         """

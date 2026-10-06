@@ -1848,9 +1848,8 @@ class TestGetJobRunLogs:
         )
         job_stats = JobStats(job_id=JOB_ID, job_run_id=JOB_RUN_ID)
         mock_store.get_job_stats.return_value = job_stats
-        # get_job() calls aggregator — return proper dict and empty batch stats
-        mock_aggregator.get_aggregated_node_stats.return_value = {"n1": node}
-        mock_aggregator.get_batch_node_stats.return_value = {}
+        # get_job() with node + batch stats reads both views through one aggregator call
+        mock_aggregator.get_aggregated_and_batch_node_stats.return_value = ({"n1": node}, {})
         result = job_tracker_service.get_job_run_logs(job_run_id=JOB_RUN_ID)
         assert len(result) > 0
 

@@ -16,7 +16,10 @@ File Layout:
                 node_stats.lock     # Lock for node_stats operations
 """
 
+import copy
 import json
+import os
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -85,7 +88,7 @@ class JsonJobStatsStore(JobStatsStore):
         self._base_dir = resolved_base_dir
         self._lock_timeout = lock_timeout
 
-        logger.info(f"JsonJobStatsStore initialized: base_dir={self._base_dir}, lock_timeout={lock_timeout}s")
+        logger.info("JsonJobStatsStore initialized: base_dir=%s, lock_timeout=%ss", self._base_dir, lock_timeout)
 
     def _get_job_dir(self, *, job_run_id: str) -> Path:
         """Get directory path for a specific job run: /data/job_stats/{job_run_id}/"""
@@ -173,7 +176,7 @@ class JsonJobStatsStore(JobStatsStore):
             with Path(path).open(encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            logger.error(f"Failed to read JSON file {path}: {e}")
+            logger.error("Failed to read JSON file %s: %s", path, e)
             raise JobStatsStoreReadException(
                 message=f"Failed to read JSON file {path}: {e}", job_run_id=None, operation="read_json"
             ) from e
@@ -287,7 +290,7 @@ class JsonJobStatsStore(JobStatsStore):
 
                 self._atomic_write_json(path=path, data=data)
 
-                logger.debug(f"Stored node stats: job_run_id={job_run_id}, node_id={node_id}, batch_id={batch_id}")
+                logger.debug("Stored node stats: job_run_id=%s, node_id=%s, batch_id=%s", job_run_id, node_id, batch_id)
         except Timeout as e:
             raise JobStatsStoreWriteException(
                 message=f"Failed to acquire lock for node stats write: timeout={self._lock_timeout}s",
@@ -295,7 +298,7 @@ class JsonJobStatsStore(JobStatsStore):
                 operation="store_node_stats",
             ) from e
         except Exception as e:
-            logger.error(f"Failed to store node stats: {e}")
+            logger.error("Failed to store node stats: %s", e)
             raise JobStatsStoreWriteException(
                 message=f"Failed to store node stats: {e}", job_run_id=job_run_id, operation="store_node_stats"
             ) from e
@@ -313,6 +316,58 @@ class JsonJobStatsStore(JobStatsStore):
         Returns:
             List of ALL NodeStats records
         """
+        result = self._read_node_stats_records(job_run_id=job_run_id, operation="get_node_stats")
+        logger.debug("Retrieved %s node stats records: job_run_id=%s", len(result), job_run_id)
+        return result
+
+    @staticmethod
+    def _list_node_stats_files(*, node_stats_dir: Path, name_filter: Callable[[str], bool] | None) -> list[Path]:
+        """
+        List the node-stats JSON files of a directory, optionally filtered by file name.
+
+        Equivalent to ``node_stats_dir.glob("*.json")`` (same ``os.scandir`` order,
+        an unreadable directory yields nothing), but applies ``name_filter`` to the
+        bare file names first so that callers only open the files they need.
+
+        Args:
+            node_stats_dir: Node stats directory of a job run
+            name_filter: Optional predicate on the file name; None selects every JSON file
+
+        Returns:
+            Paths of the selected files in directory order
+        """
+        try:
+            with os.scandir(node_stats_dir) as entries:
+                names = [entry.name for entry in entries]
+        except OSError:
+            return []
+        return [
+            node_stats_dir / name
+            for name in names
+            if name.endswith(".json") and (name_filter is None or name_filter(name))
+        ]
+
+    def _read_node_stats_records(
+        self,
+        *,
+        job_run_id: str,
+        operation: str,
+        name_filter: Callable[[str], bool] | None = None,
+    ) -> list[NodeStats]:
+        """
+        Read and parse node-stats files of a job run under the node-stats lock.
+
+        Args:
+            job_run_id: Job run identifier
+            operation: Operation name reported in raised exceptions
+            name_filter: Optional predicate on the file name restricting which files are read
+
+        Returns:
+            Parsed NodeStats records in directory order (empty files are skipped)
+
+        Raises:
+            JobStatsStoreReadException: If the lock cannot be acquired or a file cannot be read
+        """
         lock_path = self._get_node_stats_lock_path(job_run_id=job_run_id)
         lock = FileLock(str(lock_path), timeout=self._lock_timeout)
 
@@ -325,25 +380,208 @@ class JsonJobStatsStore(JobStatsStore):
                     return result
 
                 try:
-                    # Read all JSON files in node_stats directory
-                    for json_file in node_stats_dir.glob("*.json"):
+                    for json_file in self._list_node_stats_files(
+                        node_stats_dir=node_stats_dir, name_filter=name_filter
+                    ):
                         data = self._read_json(path=json_file)
                         if data:
-                            node_stats = NodeStats(**data)
-                            result.append(node_stats)
-
-                    logger.debug(f"Retrieved {len(result)} node stats records: job_run_id={job_run_id}")
+                            result.append(NodeStats(**data))
                     return result
                 except Exception as e:
-                    logger.error(f"Failed to read node stats: {e}")
+                    logger.error("Failed to read node stats: %s", e)
                     raise JobStatsStoreReadException(
-                        message=f"Failed to read node stats: {e}", job_run_id=job_run_id, operation="get_node_stats"
+                        message=f"Failed to read node stats: {e}", job_run_id=job_run_id, operation=operation
                     ) from e
         except Timeout as e:
             raise JobStatsStoreReadException(
                 message=f"Failed to acquire lock for node stats read: timeout={self._lock_timeout}s",
                 job_run_id=job_run_id,
-                operation="get_node_stats",
+                operation=operation,
+            ) from e
+
+    def get_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> list[NodeStats]:
+        """
+        Retrieve raw node statistics records of a single node.
+
+        Only ``<node_id>.json`` and ``<node_id>_<batch_id>.json`` files are read
+        instead of every file of the job run. Records are returned in the same
+        relative order as ``get_node_stats()``.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+
+        Returns:
+            List of NodeStats records of that node
+        """
+        records = self._read_node_stats_records(
+            job_run_id=job_run_id,
+            operation="get_node_stats_for_node",
+            name_filter=self._node_file_filter(node_id=node_id, include_non_batch=True),
+        )
+        # Another node id may share the prefix (e.g. "a" and "a_b"); the record id is authoritative.
+        return [record for record in records if record.id == node_id]
+
+    def get_batch_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> dict[str, NodeStats]:
+        """
+        Retrieve batch-level node statistics of a single node.
+
+        Only ``<node_id>_<batch_id>.json`` files are read. The result equals
+        ``get_batch_node_stats()[node_id]`` (or an empty dict).
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+
+        Returns:
+            Dict: {batch_id: NodeStats}
+        """
+        records = self._read_node_stats_records(
+            job_run_id=job_run_id,
+            operation="get_batch_node_stats_for_node",
+            name_filter=self._node_file_filter(node_id=node_id, include_non_batch=False),
+        )
+        result: dict[str, NodeStats] = {}
+        for record in records:
+            if record.id == node_id and record.batch_id is not None:
+                result[record.batch_id] = record
+        return result
+
+    def all_batch_node_stats_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and all of them are in one of ``statuses``.
+
+        Reads the ``<node_id>_<batch_id>.json`` files of the node in directory
+        order and stops at the first record whose status is not accepted, so a
+        node with unfinished batches usually costs a few file reads instead of
+        one per batch.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and every batch record's status is in ``statuses``
+        """
+        operation = "all_batch_node_stats_in_statuses"
+        lock_path = self._get_node_stats_lock_path(job_run_id=job_run_id)
+        lock = FileLock(str(lock_path), timeout=self._lock_timeout)
+
+        try:
+            with lock.acquire(timeout=self._lock_timeout):
+                node_stats_dir = self._get_node_stats_dir(job_run_id=job_run_id)
+                if not node_stats_dir.exists():
+                    return False
+
+                try:
+                    found = False
+                    name_filter = self._node_file_filter(node_id=node_id, include_non_batch=False)
+                    for json_file in self._list_node_stats_files(
+                        node_stats_dir=node_stats_dir, name_filter=name_filter
+                    ):
+                        data = self._read_json(path=json_file)
+                        if not data:
+                            continue
+                        record = NodeStats(**data)
+                        if record.id != node_id or record.batch_id is None:
+                            continue
+                        if record.node_status not in statuses:
+                            return False
+                        found = True
+                    return found
+                except Exception as e:
+                    logger.error("Failed to read node stats: %s", e)
+                    raise JobStatsStoreReadException(
+                        message=f"Failed to read node stats: {e}", job_run_id=job_run_id, operation=operation
+                    ) from e
+        except Timeout as e:
+            raise JobStatsStoreReadException(
+                message=f"Failed to acquire lock for node stats read: timeout={self._lock_timeout}s",
+                job_run_id=job_run_id,
+                operation=operation,
+            ) from e
+
+    @staticmethod
+    def _node_file_filter(*, node_id: str, include_non_batch: bool) -> Callable[[str], bool]:
+        """
+        Build a file-name predicate selecting the node-stats files of one node.
+
+        Args:
+            node_id: Node identifier
+            include_non_batch: Whether the non-batch ``<node_id>.json`` file is selected too
+
+        Returns:
+            Predicate on a bare file name
+        """
+        batch_prefix = f"{node_id}_"
+        non_batch_name = f"{node_id}.json"
+
+        def _matches(name: str) -> bool:
+            return name.startswith(batch_prefix) or (include_non_batch and name == non_batch_name)
+
+        return _matches
+
+    @staticmethod
+    def _is_batch_file_name(name: str) -> bool:
+        """Return True for names matched by the ``*_*.json`` pattern used for batch-scoped files."""
+        return "_" in name[: -len(".json")]
+
+    def get_node_stats_with_batch_view(
+        self, *, job_run_id: str
+    ) -> tuple[list[NodeStats], dict[str, dict[str, NodeStats]]]:
+        """
+        Retrieve ``get_node_stats()`` and ``get_batch_node_stats()`` from a single directory scan.
+
+        Each file is read and JSON-decoded once under one lock acquisition.
+        Batch-view records are built from the same decoded data with a deep
+        copy of ``node_metadata``, so they share no mutable state with the
+        flat records (aggregation mutates the metadata of the flat records).
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+
+        Returns:
+            Tuple of (flat list of all NodeStats records, {node_id: {batch_id: NodeStats}})
+        """
+        lock_path = self._get_node_stats_lock_path(job_run_id=job_run_id)
+        lock = FileLock(str(lock_path), timeout=self._lock_timeout)
+
+        try:
+            with lock.acquire(timeout=self._lock_timeout):
+                records: list[NodeStats] = []
+                batch_view: dict[str, dict[str, NodeStats]] = {}
+                node_stats_dir = self._get_node_stats_dir(job_run_id=job_run_id)
+
+                if not node_stats_dir.exists():
+                    return records, batch_view
+
+                try:
+                    for json_file in self._list_node_stats_files(node_stats_dir=node_stats_dir, name_filter=None):
+                        data = self._read_json(path=json_file)
+                        if not data:
+                            continue
+                        record = NodeStats(**data)
+                        records.append(record)
+                        if record.batch_id is None or not self._is_batch_file_name(json_file.name):
+                            continue
+                        batch_data = dict(data)
+                        if "node_metadata" in batch_data:
+                            batch_data["node_metadata"] = copy.deepcopy(batch_data["node_metadata"])
+                        batch_view.setdefault(record.id, {})[record.batch_id] = NodeStats(**batch_data)
+                    return records, batch_view
+                except Exception as e:
+                    logger.error("Failed to read node stats: %s", e)
+                    raise JobStatsStoreReadException(
+                        message=f"Failed to read node stats: {e}",
+                        job_run_id=job_run_id,
+                        operation="get_node_stats_with_batch_view",
+                    ) from e
+        except Timeout as e:
+            raise JobStatsStoreReadException(
+                message=f"Failed to acquire lock for node stats read: timeout={self._lock_timeout}s",
+                job_run_id=job_run_id,
+                operation="get_node_stats_with_batch_view",
             ) from e
 
     def get_batch_node_stats(self, *, job_run_id: str) -> dict[str, dict[str, NodeStats]]:
@@ -384,10 +622,10 @@ class JsonJobStatsStore(JobStatsStore):
                                     result[node_id] = {}
                                 result[node_id][batch_id] = node_stats
 
-                    logger.debug(f"Retrieved batch node stats: job_run_id={job_run_id}, nodes={len(result)}")
+                    logger.debug("Retrieved batch node stats: job_run_id=%s, nodes=%s", job_run_id, len(result))
                     return result
                 except Exception as e:
-                    logger.error(f"Failed to read batch node stats: {e}")
+                    logger.error("Failed to read batch node stats: %s", e)
                     raise JobStatsStoreReadException(
                         message=f"Failed to read batch node stats: {e}",
                         job_run_id=job_run_id,
@@ -401,11 +639,22 @@ class JsonJobStatsStore(JobStatsStore):
             ) from e
 
     def get_failed_docs_for_batch(self, *, job_run_id: str, batch_id: str) -> list[str]:
-        """Retrieve failed document IDs for all nodes in a single batch."""
+        """
+        Retrieve failed document IDs for all nodes in a single batch.
+
+        Only the ``<node_id>_<batch_id>.json`` files of that batch are read, in
+        the same order as a full scan, so the result is identical to filtering
+        ``get_node_stats()`` by ``batch_id``.
+        """
+        batch_suffix = f"_{batch_id}.json"
         try:
-            all_records = self.get_node_stats(job_run_id=job_run_id)
+            batch_records = self._read_node_stats_records(
+                job_run_id=job_run_id,
+                operation="get_failed_docs_for_batch",
+                name_filter=lambda name: name.endswith(batch_suffix),
+            )
             failed_doc_ids: list[str] = []
-            for record in all_records:
+            for record in batch_records:
                 if getattr(record, "batch_id", None) != batch_id:
                     continue
                 failed_docs = getattr(record, "failed_docs", None)
@@ -489,7 +738,7 @@ class JsonJobStatsStore(JobStatsStore):
 
                     self._atomic_write_json(path=path, data=data)
 
-                logger.debug(f"Bulk stored {len(node_stats_list)} node stats: job_run_id={job_run_id}")
+                logger.debug("Bulk stored %s node stats: job_run_id=%s", len(node_stats_list), job_run_id)
         except Timeout as e:
             raise JobStatsStoreWriteException(
                 message=f"Failed to acquire lock for bulk node stats write: timeout={self._lock_timeout}s",
@@ -497,7 +746,7 @@ class JsonJobStatsStore(JobStatsStore):
                 operation="bulk_store_node_stats",
             ) from e
         except Exception as e:
-            logger.error(f"Failed to bulk store node stats: {e}")
+            logger.error("Failed to bulk store node stats: %s", e)
             raise JobStatsStoreWriteException(
                 message=f"Failed to bulk store node stats: {e}",
                 job_run_id=job_run_id,
@@ -595,7 +844,7 @@ class JsonJobStatsStore(JobStatsStore):
                 try:
                     return NodeStats(**data)
                 except Exception as e:
-                    logger.error(f"Failed to parse node stats from {path}: {e}")
+                    logger.error("Failed to parse node stats from %s: %s", path, e)
                     raise JobStatsStoreReadException(
                         message=f"Failed to parse node stats: {e}",
                         job_run_id=job_run_id,
@@ -641,9 +890,9 @@ class JsonJobStatsStore(JobStatsStore):
 
                         shutil.rmtree(job_dir)
 
-                        logger.info(f"Deleted job stats: job_run_id={job_run_id}")
+                        logger.info("Deleted job stats: job_run_id=%s", job_run_id)
                     except Exception as e:
-                        logger.error(f"Failed to delete job stats: {e}")
+                        logger.error("Failed to delete job stats: %s", e)
                         raise JobStatsStoreDeleteException(
                             message=f"Failed to delete job stats: {e}", job_run_id=job_run_id
                         ) from e
@@ -706,10 +955,10 @@ class JsonJobStatsStore(JobStatsStore):
 
                     return job_stats
                 except Exception as e:
-                    logger.warning(f"Failed to parse job stats from {job_stats_path}: {e}")
+                    logger.warning("Failed to parse job stats from %s: %s", job_stats_path, e)
                     return None
         except Timeout:
-            logger.warning(f"Timeout acquiring lock for job stats read: {job_run_id}")
+            logger.warning("Timeout acquiring lock for job stats read: %s", job_run_id)
             return None
 
     def list_job_runs(
@@ -756,7 +1005,7 @@ class JsonJobStatsStore(JobStatsStore):
             # Apply limit
             return result[:limit]
         except Exception as e:
-            logger.error(f"Failed to list jobs: {e}")
+            logger.error("Failed to list jobs: %s", e)
             raise JobStatsStoreReadException(
                 message=f"Failed to list jobs: {e}", job_run_id=None, operation="list_job_runs"
             ) from e

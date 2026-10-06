@@ -4,7 +4,7 @@ See DefaultJobRunManager for a reference implementation.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 
 class JobRunManager(ABC):
@@ -31,6 +31,12 @@ class JobRunManager(ABC):
     - Cancel running jobs
     - Delete job run records
     """
+
+    #: Whether ``update_job_run_status()`` reads per-node statistics (``node_stats``)
+    #: from ``job_run_stats``. Aggregating them requires reading every node-stats
+    #: record of the run, so callers only include them for adapters that declare
+    #: they need them. Defaults to True so custom adapters keep receiving them.
+    consumes_node_stats: ClassVar[bool] = True
 
     @abstractmethod
     def create_job_run(self, *, job_id: str, job_config: dict[str, Any]) -> dict[str, Any]:
