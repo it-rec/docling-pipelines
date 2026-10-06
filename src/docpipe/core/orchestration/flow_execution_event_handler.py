@@ -808,12 +808,13 @@ class FlowExecutionEventHandler(AbstractFlowExecutionEventHandler):
 
         is_batch_context = self._is_batch_context(global_config=global_config)
         if is_batch_context:
-            batch_records = list(
-                self.job_stats_service.get_batch_node_stats_for_node(
-                    job_run_id=self.job_run_id, node_id=node_id
-                ).values()
-            )
-            if not self._all_batches_finished(batch_records=batch_records):
+            from docpipe.core.job_management.application.aggregation.batch_aggregator import FINISHED_BATCH_STATUSES
+
+            # Same outcome as _all_batches_finished() over the node's batch records:
+            # at least one batch and every batch in a finished state (no pending/queued/running).
+            if not self.job_stats_service.all_node_batches_in_statuses(
+                job_run_id=self.job_run_id, node_id=node_id, statuses=FINISHED_BATCH_STATUSES
+            ):
                 return
 
         node_stats = self.job_stats_service.get_aggregated_node_stats_for_node(

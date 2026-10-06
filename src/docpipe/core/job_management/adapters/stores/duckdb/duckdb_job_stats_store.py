@@ -502,6 +502,43 @@ class DuckDBJobStatsStore(JobStatsStore):  # type: ignore[misc]
                 operation="get_batch_node_stats_for_node",
             ) from e
 
+    def all_batch_node_stats_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and all of them are in one of ``statuses``.
+
+        Counted in SQL; no row is materialised.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and every batch record's status is in ``statuses``
+
+        Raises:
+            JobStatsStoreReadException: If read operation fails
+        """
+        accepted = sorted(statuses)
+        placeholders = ", ".join("?" for _ in accepted) or "NULL"
+        sql = (
+            "SELECT COUNT(*), "  # nosec B608 - only '?' placeholders are interpolated
+            f"COALESCE(SUM(CASE WHEN node_status IN ({placeholders}) THEN 0 ELSE 1 END), 0) "
+            "FROM node_stats WHERE job_run_id = ? AND node_id = ? AND batch_id IS NOT NULL"
+        )
+        try:
+            with self.connection_manager.get_connection(database_path=self.database_path, read_only=True) as conn:
+                row = conn.execute(sql, [*accepted, job_run_id, node_id]).fetchone()
+            total, not_accepted = (row[0], row[1]) if row else (0, 0)
+            return total > 0 and not_accepted == 0
+        except Exception as e:
+            logger.error("Failed to check batch node stats statuses: %s", e)
+            raise JobStatsStoreReadException(
+                message=f"Failed to check batch node stats statuses: {e}",
+                job_run_id=job_run_id,
+                operation="all_batch_node_stats_in_statuses",
+            ) from e
+
     def get_failed_docs_for_batch(self, *, job_run_id: str, batch_id: str) -> list[str]:
         """
         Retrieve failed document IDs for all nodes in a single batch.

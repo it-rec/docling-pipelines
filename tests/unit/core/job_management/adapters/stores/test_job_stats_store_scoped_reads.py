@@ -222,6 +222,69 @@ class TestNodeScopedReads:
         assert json_store.get_failed_docs_for_batch(job_run_id="missing-run", batch_id=BATCH_IDS[0]) == []
 
 
+FINISHED = frozenset(
+    {
+        ExecutionStatus.COMPLETED.value,
+        ExecutionStatus.COMPLETED_WITH_ERRORS.value,
+        ExecutionStatus.COMPLETED_WITH_WARNINGS.value,
+        ExecutionStatus.FAILED.value,
+        ExecutionStatus.SKIPPED.value,
+    }
+)
+
+
+class TestAllBatchNodeStatsInStatuses:
+    """all_batch_node_stats_in_statuses must equal checking the node's full batch view."""
+
+    @staticmethod
+    def _expected(*, store: JobStatsStore, node_id: str, statuses: frozenset[str]) -> bool:
+        batches = store.get_batch_node_stats(job_run_id=JOB_RUN_ID).get(node_id, {})
+        return bool(batches) and all(record.node_status in statuses for record in batches.values())
+
+    @pytest.mark.parametrize("node_id", ALL_NODES)
+    @pytest.mark.parametrize(
+        "statuses",
+        [
+            FINISHED,
+            frozenset(),
+            frozenset({ExecutionStatus.PENDING.value, ExecutionStatus.COMPLETED_WITH_ERRORS.value}),
+            frozenset({ExecutionStatus.PENDING.value, ExecutionStatus.FAILED.value}),
+            frozenset(status.value for status in ExecutionStatus),
+        ],
+    )
+    def test_matches_full_view(self, *, populated_store, node_id, statuses):
+        result = populated_store.all_batch_node_stats_in_statuses(
+            job_run_id=JOB_RUN_ID, node_id=node_id, statuses=statuses
+        )
+        assert result == self._expected(store=populated_store, node_id=node_id, statuses=statuses)
+
+    def test_true_once_every_batch_finished(self, *, populated_store):
+        populated_store.store_node_stats(
+            job_run_id=JOB_RUN_ID,
+            node_stats=NodeStats(
+                id=NODE_A, name="a", node_status=ExecutionStatus.SKIPPED.value, batch_id=BATCH_IDS[2], batch_num=2
+            ),
+        )
+        assert populated_store.all_batch_node_stats_in_statuses(
+            job_run_id=JOB_RUN_ID, node_id=NODE_A, statuses=FINISHED
+        )
+        assert not populated_store.all_batch_node_stats_in_statuses(
+            job_run_id=JOB_RUN_ID, node_id=NODE_A_PREFIXED, statuses=FINISHED
+        )
+
+    def test_json_stops_at_first_unaccepted_record(self, *, json_store):
+        with patch.object(json_store, "_read_json", wraps=json_store._read_json) as read_json:
+            result = json_store.all_batch_node_stats_in_statuses(
+                job_run_id=JOB_RUN_ID, node_id=NODE_B, statuses=frozenset()
+            )
+
+        assert result is False
+        assert read_json.call_count == 1
+
+    def test_json_missing_run_is_false(self, *, json_store):
+        assert not json_store.all_batch_node_stats_in_statuses(job_run_id="missing", node_id=NODE_A, statuses=FINISHED)
+
+
 class TestNodeStatsWithBatchView:
     """get_node_stats_with_batch_view must equal the two separate full reads."""
 

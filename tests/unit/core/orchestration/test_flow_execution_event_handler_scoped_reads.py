@@ -16,6 +16,7 @@ from docpipe.core.constants.constants import DocpipeConstants, ExecutionStatus
 from docpipe.core.job_management.adapters.frameworks.default_job_run_manager import DefaultJobRunManager
 from docpipe.core.job_management.adapters.services.job_tracker_service import JobTrackerService
 from docpipe.core.job_management.adapters.stores.json.json_job_stats_store import JsonJobStatsStore
+from docpipe.core.job_management.application.aggregation.batch_aggregator import FINISHED_BATCH_STATUSES
 from docpipe.core.job_management.application.services import NodeStatsAggregator
 from docpipe.core.job_management.domain.models import JobStats, NodeStats
 from docpipe.core.job_management.domain.ports import JobRunManager
@@ -155,21 +156,45 @@ class TestLazyFrameworkStatus:
 class TestOperatorSummaryReads:
     """Batch-mode summary checks completion from the node's batch records before aggregating."""
 
-    def test_pending_batches_skip_aggregation(self):
+    def test_unfinished_batches_skip_aggregation(self):
         service = MagicMock()
-        service.get_batch_node_stats_for_node.return_value = {
-            BATCH_IDS[0]: NodeStats(id=NODE_A, name="a", node_status=ExecutionStatus.COMPLETED.value),
-            BATCH_IDS[1]: NodeStats(id=NODE_A, name="a", node_status=ExecutionStatus.PENDING.value),
-        }
+        service.all_node_batches_in_statuses.return_value = False
         reporter = MagicMock()
         handler = _make_handler(job_stats_service=service, execution_reporter=reporter)
 
         _step(handler=handler, node_id=NODE_A, global_config={DocpipeConstants.BATCH_ID: BATCH_IDS[0]})
 
-        service.get_batch_node_stats_for_node.assert_called_once_with(job_run_id=JOB_RUN_ID, node_id=NODE_A)
+        service.all_node_batches_in_statuses.assert_called_once_with(
+            job_run_id=JOB_RUN_ID, node_id=NODE_A, statuses=FINISHED_BATCH_STATUSES
+        )
         service.get_aggregated_node_stats_for_node.assert_not_called()
+        service.get_batch_node_stats_for_node.assert_not_called()
         service.get_job.assert_not_called()
         reporter.print_operator_summary.assert_not_called()
+
+    @pytest.mark.parametrize("node_status", [ExecutionStatus.RUNNING.value, ExecutionStatus.COMPLETED.value])
+    def test_finished_batches_print_only_terminal_aggregate(self, node_status):
+        service = MagicMock()
+        service.all_node_batches_in_statuses.return_value = True
+        node = NodeStats(id=NODE_A, name="a", node_status=node_status)
+        service.get_aggregated_node_stats_for_node.return_value = node
+        reporter = MagicMock()
+        handler = _make_handler(job_stats_service=service, execution_reporter=reporter)
+
+        _step(handler=handler, node_id=NODE_A, global_config={DocpipeConstants.BATCH_ID: BATCH_IDS[0]})
+
+        assert reporter.print_operator_summary.called == (node_status == ExecutionStatus.COMPLETED.value)
+
+    def test_finished_status_set_matches_batch_completion_rule(self):
+        """all-in-FINISHED_BATCH_STATUSES is the same rule as _all_batches_finished for every status mix."""
+        import itertools
+
+        statuses = [status.value for status in ExecutionStatus]
+        for size in range(3):
+            for combo in itertools.product(statuses, repeat=size):
+                records = [NodeStats(id=NODE_A, name="a", node_status=status) for status in combo]
+                expected = FlowExecutionEventHandler._all_batches_finished(batch_records=records)
+                assert (bool(records) and all(s in FINISHED_BATCH_STATUSES for s in combo)) == expected, combo
 
     def test_non_batch_mode_prints_aggregated_node(self):
         service = MagicMock()

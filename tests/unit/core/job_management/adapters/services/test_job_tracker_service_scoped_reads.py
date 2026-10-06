@@ -142,6 +142,12 @@ class TestGetJobSingleScan:
 
     @pytest.mark.parametrize("include_logs", [False, True])
     def test_api_status_response_byte_identical(self, *, service, include_logs):
+        # The mapper derives a running job's duration from the wall clock; pin end_time so
+        # both responses are computed from stored data only.
+        job_stats = service.job_stats_store.get_job_stats(JOB_RUN_ID)
+        job_stats.end_time = job_stats.start_time + 5
+        service.job_stats_store.store_job_stats(job_stats)
+
         expected = JobStatsMapper.to_status_response(
             job_stats=_legacy_get_job_with_batch_stats(service=service), include_logs=include_logs
         )
@@ -228,6 +234,17 @@ class TestPerNodeGetters:
         assert {k: v.model_dump() for k, v in default_batches.items()} == {
             k: v.model_dump() for k, v in override_batches.items()
         }
+
+    @pytest.mark.parametrize("node_id", ALL_NODES)
+    def test_all_node_batches_in_statuses_matches_port_default(self, *, service, node_id):
+        from docpipe.core.job_management.application.aggregation.batch_aggregator import FINISHED_BATCH_STATUSES
+
+        for statuses in (FINISHED_BATCH_STATUSES, FINISHED_BATCH_STATUSES | {ExecutionStatus.RUNNING.value}):
+            assert service.all_node_batches_in_statuses(
+                job_run_id=JOB_RUN_ID, node_id=node_id, statuses=statuses
+            ) == JobStatsService.all_node_batches_in_statuses(
+                service, job_run_id=JOB_RUN_ID, node_id=node_id, statuses=statuses
+            )
 
     def test_aggregated_node_stats_for_node_none_for_unknown_run(self, *, service):
         assert service.get_aggregated_node_stats_for_node(job_run_id="missing-run", node_id=EXTRACT_NODE) is None

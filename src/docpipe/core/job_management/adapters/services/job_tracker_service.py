@@ -189,6 +189,24 @@ class JobTrackerService(JobStatsService):
         """
         return self.node_stats_aggregator.get_batch_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
 
+    def all_node_batches_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and every one of them is in one of ``statuses``.
+
+        Delegates to the store, which stops reading at the first record that is not.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and all are in ``statuses``
+        """
+        return self.job_stats_store.all_batch_node_stats_in_statuses(
+            job_run_id=job_run_id, node_id=node_id, statuses=statuses
+        )
+
     def get_failed_doc_ids_for_batch(self, *, job_run_id: str, batch_id: str) -> list[str]:
         """
         Collect failed document IDs scoped to a single batch.

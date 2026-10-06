@@ -447,6 +447,61 @@ class JsonJobStatsStore(JobStatsStore):
                 result[record.batch_id] = record
         return result
 
+    def all_batch_node_stats_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and all of them are in one of ``statuses``.
+
+        Reads the ``<node_id>_<batch_id>.json`` files of the node in directory
+        order and stops at the first record whose status is not accepted, so a
+        node with unfinished batches usually costs a few file reads instead of
+        one per batch.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and every batch record's status is in ``statuses``
+        """
+        operation = "all_batch_node_stats_in_statuses"
+        lock_path = self._get_node_stats_lock_path(job_run_id=job_run_id)
+        lock = FileLock(str(lock_path), timeout=self._lock_timeout)
+
+        try:
+            with lock.acquire(timeout=self._lock_timeout):
+                node_stats_dir = self._get_node_stats_dir(job_run_id=job_run_id)
+                if not node_stats_dir.exists():
+                    return False
+
+                try:
+                    found = False
+                    name_filter = self._node_file_filter(node_id=node_id, include_non_batch=False)
+                    for json_file in self._list_node_stats_files(
+                        node_stats_dir=node_stats_dir, name_filter=name_filter
+                    ):
+                        data = self._read_json(path=json_file)
+                        if not data:
+                            continue
+                        record = NodeStats(**data)
+                        if record.id != node_id or record.batch_id is None:
+                            continue
+                        if record.node_status not in statuses:
+                            return False
+                        found = True
+                    return found
+                except Exception as e:
+                    logger.error("Failed to read node stats: %s", e)
+                    raise JobStatsStoreReadException(
+                        message=f"Failed to read node stats: {e}", job_run_id=job_run_id, operation=operation
+                    ) from e
+        except Timeout as e:
+            raise JobStatsStoreReadException(
+                message=f"Failed to acquire lock for node stats read: timeout={self._lock_timeout}s",
+                job_run_id=job_run_id,
+                operation=operation,
+            ) from e
+
     @staticmethod
     def _node_file_filter(*, node_id: str, include_non_batch: bool) -> Callable[[str], bool]:
         """

@@ -145,6 +145,24 @@ class JobStatsService(ABC):
             return {}
         return job_stats.batch_node_stats.get(node_id, {})
 
+    def all_node_batches_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and every one of them is in one of ``statuses``.
+
+        Equivalent to checking ``get_batch_node_stats_for_node()``; implementations
+        should override it to stop reading at the first record that is not.
+
+        Args:
+            job_run_id: Job run identifier
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and all are in ``statuses``
+        """
+        batch_records = self.get_batch_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
+        return bool(batch_records) and all(record.node_status in statuses for record in batch_records.values())
+
     @abstractmethod
     def end_job(self, *, job_run_id: str, status: str, job_run_stats: dict[str, Any] | None = None) -> None:
         """

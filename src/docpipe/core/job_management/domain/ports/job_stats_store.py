@@ -180,6 +180,28 @@ class JobStatsStore(ABC):
         """
         return self.get_batch_node_stats(job_run_id=job_run_id).get(node_id, {})
 
+    def all_batch_node_stats_in_statuses(self, *, job_run_id: str, node_id: str, statuses: frozenset[str]) -> bool:
+        """
+        Check whether a node has batch records and all of them are in one of ``statuses``.
+
+        Equivalent to checking ``get_batch_node_stats_for_node()``. Backends
+        should override it to stop reading at the first record whose status is
+        not in ``statuses``.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+            statuses: Accepted ``node_status`` values
+
+        Returns:
+            True if at least one batch record exists and every batch record's status is in ``statuses``
+
+        Raises:
+            JobStatsStoreReadException: If read operation fails
+        """
+        batch_records = self.get_batch_node_stats_for_node(job_run_id=job_run_id, node_id=node_id)
+        return bool(batch_records) and all(record.node_status in statuses for record in batch_records.values())
+
     def get_node_stats_with_batch_view(
         self, *, job_run_id: str
     ) -> tuple[list[NodeStats], dict[str, dict[str, NodeStats]]]:
