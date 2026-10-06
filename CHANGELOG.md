@@ -30,6 +30,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 - OpenLineage dependencies, domain models, and port interfaces (#62)
 - Deprecation policy (`docs/guides/DEPRECATION_POLICY.md`) and migration guide template (#58)
 - Release process documentation (`RELEASE_PROCESS.md`) (#58)
+- Unit tests for the API auth layer (LDAP, auth dependencies, OAuth2 routes/provider, JWT), raising coverage of `src/docpipe/api/auth` from 61% to 99% (#36)
 
 ### Changed
 
@@ -52,6 +53,12 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 - Node execution logs aligned with DAG pipeline order; active duration calculation fixed (#107)
 - `scripts/test_examples.py --dry-run` skips prerequisites before probing Ollama or environment (#31)
 - S3 benchmark flows use configured prefix and `max_files` without embedding a corpus-wide exclusion list
+
+### Security
+
+- LDAP login escapes the username in search filters, preventing LDAP filter injection (e.g. `*` matching and binding as an arbitrary user) (#36)
+- LDAP login rejects empty usernames or passwords before binding, closing an unauthenticated-bind bypass on servers that accept anonymous simple binds (#36)
+- API JWT verification now requires the `exp` claim, so a correctly signed token without an expiry is no longer accepted indefinitely (#36)
 
 ---
 
