@@ -139,6 +139,69 @@ class JobStatsStore(ABC):
         """
         ...
 
+    def get_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> list[NodeStats]:
+        """
+        Retrieve raw node statistics records (batch and non-batch) of a single node.
+
+        Returns exactly the records of ``get_node_stats()`` whose ``id`` equals
+        ``node_id``, in the same relative order. The default implementation
+        filters the full read; backends should override it to read only the
+        records of that node.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+
+        Returns:
+            List of NodeStats records of that node
+
+        Raises:
+            JobStatsStoreReadException: If read operation fails
+        """
+        return [record for record in self.get_node_stats(job_run_id=job_run_id) if record.id == node_id]
+
+    def get_batch_node_stats_for_node(self, *, job_run_id: str, node_id: str) -> dict[str, NodeStats]:
+        """
+        Retrieve batch-level node statistics of a single node.
+
+        Returns the same mapping as ``get_batch_node_stats()[node_id]`` (or an
+        empty dict). The default implementation filters the full read; backends
+        should override it to read only the records of that node.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+            node_id: Node identifier
+
+        Returns:
+            Dict: {batch_id: NodeStats}
+
+        Raises:
+            JobStatsStoreReadException: If read operation fails
+        """
+        return self.get_batch_node_stats(job_run_id=job_run_id).get(node_id, {})
+
+    def get_node_stats_with_batch_view(
+        self, *, job_run_id: str
+    ) -> tuple[list[NodeStats], dict[str, dict[str, NodeStats]]]:
+        """
+        Retrieve the results of ``get_node_stats()`` and ``get_batch_node_stats()`` together.
+
+        Backends that can serve both views from a single read should override
+        this. The NodeStats objects of the batch view must not share mutable
+        state with the records of the flat list, because aggregation mutates
+        the metadata of the flat records in place.
+
+        Args:
+            job_run_id: Job run identifier (globally unique)
+
+        Returns:
+            Tuple of (flat list of all NodeStats records, {node_id: {batch_id: NodeStats}})
+
+        Raises:
+            JobStatsStoreReadException: If read operation fails
+        """
+        return self.get_node_stats(job_run_id=job_run_id), self.get_batch_node_stats(job_run_id=job_run_id)
+
     @abstractmethod
     def bulk_store_node_stats(self, *, job_run_id: str, node_stats_list: list[NodeStats]) -> None:
         """

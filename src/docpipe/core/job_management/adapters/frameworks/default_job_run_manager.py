@@ -5,7 +5,7 @@ This adapter provides a simple, synchronous job execution framework
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from docpipe.core.constants.constants import DocpipeConstants, ExecutionStatus
 from docpipe.core.job_management.domain.ports import JobRunManager, JobStatsService
@@ -28,6 +28,13 @@ class DefaultJobRunManager(JobRunManager):
     - Simple status management
 
     """
+
+    # update_job_run_status() copies job_run_stats onto the job-level JobStats and
+    # persists it with store_job_stats(), which never persists node statistics
+    # (JSON/DuckDB stores exclude node_stats/batch_node_stats, the Postgres mapper
+    # ignores them, and get_job() always replaces them on read). Node statistics in
+    # job_run_stats would therefore be read and discarded on every status update.
+    consumes_node_stats: ClassVar[bool] = False
 
     def __init__(self, *, job_stats_service: JobStatsService):
         """
@@ -58,9 +65,9 @@ class DefaultJobRunManager(JobRunManager):
             raise ValueError("job_config is required")
 
         job_run_id = str(uuid.uuid4())
-        logger.info(f"Creating job run: {job_run_id}")
+        logger.info("Creating job run: %s", job_run_id)
 
-        logger.info(f"Created job run in default framework: job_id={job_id}, job_run_id={job_run_id}")
+        logger.info("Created job run in default framework: job_id=%s, job_run_id=%s", job_id, job_run_id)
 
         return {
             DocpipeConstants.JOB_ID: job_id,
@@ -106,7 +113,7 @@ class DefaultJobRunManager(JobRunManager):
         job_stats = self.job_stats_service.get_job_run_stats(job_run_id=job_run_id)
 
         if not job_stats:
-            logger.warning(f"Job run not found for status update: {job_run_id}")
+            logger.warning("Job run not found for status update: %s", job_run_id)
             return
 
         # Protect terminal states from being overwritten by delayed subflow updates
@@ -118,8 +125,10 @@ class DefaultJobRunManager(JobRunManager):
 
         if current_status in TERMINAL_JOB_STATUSES and new_status not in TERMINAL_JOB_STATUSES:
             logger.info(
-                f"Ignoring status update to {new_status} because job run {job_run_id} "
-                f"is already in terminal state {current_status}"
+                "Ignoring status update to %s because job run %s is already in terminal state %s",
+                new_status,
+                job_run_id,
+                current_status,
             )
             return
 
@@ -136,7 +145,7 @@ class DefaultJobRunManager(JobRunManager):
         # Store updated stats via JobStatsService
         self.job_stats_service.store_job_stats(job_stats=job_stats)
 
-        logger.info(f"Updated job run status: job_run_id={job_run_id}, status={status}")
+        logger.info("Updated job run status: job_run_id=%s, status=%s", job_run_id, status)
 
     def cancel_job_run(self, *, job_run_id: str) -> None:
         """
@@ -154,7 +163,7 @@ class DefaultJobRunManager(JobRunManager):
         """
         # Framework-specific cancellation would go here
         # Job cancellation is handled by the service layer already for default job run manager
-        logger.info(f"Canceled job run framework resources: job_run_id={job_run_id}")
+        logger.info("Canceled job run framework resources: job_run_id=%s", job_run_id)
 
     def delete_job_run(self, *, job_run_id: str) -> None:
         """
@@ -172,4 +181,4 @@ class DefaultJobRunManager(JobRunManager):
         """
         # Framework-specific cleanup would go here
         # Job stats deletion is handled by the service layer already for default job run manager
-        logger.info(f"Deleted job run framework resources: job_run_id={job_run_id}")
+        logger.info("Deleted job run framework resources: job_run_id=%s", job_run_id)
