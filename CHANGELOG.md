@@ -30,6 +30,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 - OpenLineage dependencies, domain models, and port interfaces (#62)
 - Deprecation policy (`docs/guides/DEPRECATION_POLICY.md`) and migration guide template (#58)
 - Release process documentation (`RELEASE_PROCESS.md`) (#58)
+- PostgreSQL backend for document set and document library metadata and document set attachment references (`assets_management.documentset_repository.type` / `documentlibrary_repository.type: postgres`, or `DOCUMENTSET_REPOSITORY_TYPE` / `DOCUMENTLIBRARY_REPOSITORY_TYPE=postgres`), so multiple API replicas can share asset metadata. Tables are created automatically in a dedicated schema (default `docpipe_assets`); connection settings use `config.postgres.*` with `DOCPIPE_POSTGRES_*` fallbacks. Document set data tables remain on the configured data store (DuckDB by default) (#54)
 
 ### Changed
 
@@ -52,6 +53,7 @@ Versioning follows [Semantic Versioning 2.0.0](https://semver.org/).
 - Node execution logs aligned with DAG pipeline order; active duration calculation fixed (#107)
 - `scripts/test_examples.py --dry-run` skips prerequisites before probing Ollama or environment (#31)
 - S3 benchmark flows use configured prefix and `max_files` without embedding a corpus-wide exclusion list
+- REST API now stores document set attachment references in the same backend as the document set repository when it is `postgres`, matching the `document_set` operator (#54)
 
 ---
 
