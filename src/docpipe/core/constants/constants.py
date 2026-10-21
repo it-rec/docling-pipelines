@@ -300,6 +300,12 @@ class DocpipeConfigKeys:
     # Global storage configuration keys (shared defaults for all services)
     GLOBAL_STORAGE = "global_storage"
 
+    # Docling converter pool configuration keys (docling.converter_pool.*)
+    DOCLING = "docling"
+    CONVERTER_POOL = "converter_pool"
+    SIZE = "size"
+    IDLE_TTL_SECONDS = "idle_ttl_seconds"
+
 
 class EnvironmentVariables:
     """Environment variable names used across Docpipe runtime components."""
@@ -334,12 +340,23 @@ class EnvironmentVariables:
     DOCPIPE_POSTGRES_USER = "DOCPIPE_POSTGRES_USER"
     DOCPIPE_POSTGRES_PASSWORD = "DOCPIPE_POSTGRES_PASSWORD"  # pragma: allowlist secret  # nosec B105
 
+    # Docling converter pool (process-wide reuse of DocumentConverter / DocumentExtractor)
+    DOCPIPE_DOCLING_CONVERTER_POOL_SIZE = "DOCPIPE_DOCLING_CONVERTER_POOL_SIZE"
+    DOCPIPE_DOCLING_CONVERTER_IDLE_TTL_SECONDS = "DOCPIPE_DOCLING_CONVERTER_IDLE_TTL_SECONDS"
+
     # OpenLineage Configuration
     DOCPIPE_LINEAGE_ENABLED = "DOCPIPE_LINEAGE_ENABLED"
     DOCPIPE_LINEAGE_MODE = "DOCPIPE_LINEAGE_MODE"
     DOCPIPE_LINEAGE_NAMESPACE = "DOCPIPE_LINEAGE_NAMESPACE"
     DOCPIPE_LINEAGE_PRODUCER = "DOCPIPE_LINEAGE_PRODUCER"
     DOCPIPE_LINEAGE_STRICT = "DOCPIPE_LINEAGE_STRICT"
+
+    DOCPIPE_EVENT_STREAMING_ENABLED = "DOCPIPE_EVENT_STREAMING_ENABLED"
+    DOCPIPE_API_BASE_URL = "DOCPIPE_API_BASE_URL"
+    KAFKA_BOOTSTRAP_SERVERS = "KAFKA_BOOTSTRAP_SERVERS"
+    KAFKA_INPUT_TOPIC = "KAFKA_INPUT_TOPIC"
+    KAFKA_GROUP_ID = "KAFKA_GROUP_ID"
+    SCHEMA_REGISTRY_URL = "SCHEMA_REGISTRY_URL"
 
 
 class LineageConstants:
