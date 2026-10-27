@@ -26,6 +26,8 @@ from docpipe.core.assets.flows.application.services import FlowService
 from docpipe.core.assets.flows.domain.models.flow import Flow
 from docpipe.core.constants.constants import DocpipeConstants
 from docpipe.core.custom_operators.service import CustomOperatorService
+from docpipe.core.event_streaming.factory import EventStreamingFactory
+from docpipe.core.event_streaming.mapping_service import EventMappingService
 from docpipe.core.job_management.adapters.config.job_management_factory import get_default_factory
 from docpipe.core.job_management.application.services import JobManagementService
 from docpipe.core.job_management.domain.ports import JobStatsService
@@ -75,6 +77,12 @@ def get_flow_service(
         FlowService: Service instance with injected repository and job stats service
     """
     return FlowService(repository=repository, job_stats_service=job_stats_service)
+
+
+@lru_cache(maxsize=1)
+def get_event_mapping_service() -> EventMappingService:
+    """Return the process-wide filesystem-backed event mapping service."""
+    return EventStreamingFactory.create_event_mapping_service()
 
 
 @lru_cache(maxsize=1)
@@ -138,8 +146,8 @@ def get_document_set_repository() -> AssetRepository[DocumentSet]:
 
     Uses RepositoryFactory to create repository based on configuration from
     docling-pipelines-config.yaml. This enables:
-    - OSS: DuckDBDocumentSetMetadataRepository (database-based)
-    - Future: PostgreSQL or other storage backends
+    - DuckDBAssetRepository[DocumentSet] (type: duckdb, single-process)
+    - PostgresAssetRepository[DocumentSet] (type: postgres, multi-replica safe)
 
     Returns:
         AssetRepository[DocumentSet]: Configured document set repository instance (cached singleton)
@@ -181,12 +189,21 @@ def get_document_set_attachment_repository() -> AttachmentRepository:
     repository so that the attachment KV store lives alongside the metadata store.
     Falls back to "duckdb" / DOCUMENT_SET_DEFAULT_DB_PATH if not configured.
 
+    When the document set repository type is ``postgres`` the attachments are
+    stored in PostgreSQL as well (same connection config), matching what
+    ``DocumentSetOperator`` writes during flow runs.
+
     Returns:
         AttachmentRepository: Configured attachment repository instance (cached singleton)
     """
-    _, repo_config = RepositoryFactory.get_repository_config(asset_type_name=DocumentSet.get_config_key())
-    adapter_name: str = repo_config.get("storage_adapter", RepositoryType.DUCKDB.value)
+    repo_type, repo_config = RepositoryFactory.get_repository_config(asset_type_name=DocumentSet.get_config_key())
     database_path: str = repo_config.get("database_path", DocpipeConstants.DOCUMENT_SET_DEFAULT_DB_PATH)
+    if repo_type.lower() == RepositoryType.POSTGRES.value:
+        return AttachmentRepositoryFactory.create(
+            adapter_name=RepositoryType.POSTGRES.value,
+            config={**repo_config, "database_path": database_path},
+        )
+    adapter_name: str = repo_config.get("storage_adapter", RepositoryType.DUCKDB.value)
     return AttachmentRepositoryFactory.create(
         adapter_name=adapter_name,
         config={"database_path": database_path},
